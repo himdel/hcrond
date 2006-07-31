@@ -1,0 +1,14 @@
+#!/bin/bash
+OLD=$(echo -n $(pwd)/ ; echo $0 | grep / > /dev/null && echo $(echo $0 | sed 's/\/[^\/]\+$//')/ || echo)
+NEW=$OLD"/../"
+while [ "$OLD" \!\= "$NEW" ]; do
+	OLD=$NEW
+	NEW=$(echo $OLD | sed 's/\/\.\//\//g' | sed 's/[^\/]\+\/\.\.\///g' | sed 's/\/\//\//g')
+done
+cd $NEW
+VER=$(cat VERSION)
+DN=$(echo $NEW | sed 's/^.*\/\(.*\)\/$/\1/')
+cd ..
+mv $DN $DN-$VER
+tar czvf $DN-$VER.tar.gz $DN-$VER
+mv $DN-$VER $DN

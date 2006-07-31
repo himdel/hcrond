@@ -1,0 +1,38 @@
+#!/bin/bash
+
+test -f /usr/bin/hcrond || exit 0
+
+. /lib/lsb/init-functions
+
+HCROND_PID=/var/run/hcrond.pid
+## TODO get from /etc/hcrondrc
+
+case "$1" in
+start)
+	log_begin_msg "Starting hcrond..."
+        start-stop-daemon --start --quiet --pidfile $HCROND_PID --name hcrond --startas /usr/bin/hcrond -- $LSBNAMES
+        log_end_msg $?
+        ;;
+stop)   
+	log_begin_msg "Stopping hcrond..."
+        start-stop-daemon --stop --quiet --pidfile $HCROND_PID --name hcrond
+        log_end_msg $?
+        ;;
+restart)
+	log_begin_msg "Restarting hcrond..."
+        start-stop-daemon --stop --retry 5 --quiet --pidfile $HCROND_PID --name hcrond
+        start-stop-daemon --start --quiet --pidfile $HCROND_PID --name hcrond --startas /usr/bin/hcrond -- $LSBNAMES
+        log_end_msg $?
+        ;;
+reload|force-reload)
+	log_begin_msg "Reloading configuration files for hcrond..."
+        # cron reloads automatically
+        log_end_msg 0
+        ;;
+*
+)      log_success_msg "Usage: /etc/init.d/hcrond {start|stop|restart|reload|forc
+e-reload}"
+        exit 1 
+        ;;
+esac
+exit 0

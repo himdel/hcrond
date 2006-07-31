@@ -1,0 +1,27 @@
+
+* bugs *
+
+options.l:	nefunguje -e, --debug ani --debug 1
+
+
+* features *
+
+ChangeLog:TODO
+README:TODO
+etc/init.d/hcrond: get pidfile from /etc/hcrondrc
+options.c:1477:	/* TODO. We should be able to replace this entire function body
+main.c:123:	/* TODO handle SIGHUP, etc */
+main.c:189:/* TODO fields by name - using this:
+main.c:259:			/* TODO handle uid, gid and nice*/
+main.c:327:	/* TODO eventually do something clever like sysloging name and status
+main.c:333:/* TODO add option timezone - expecting UTC */
+main.c:334:/* TODO negative options */
+*.[clh]: comment properly
+
+
+* incoming *
+
+main.c:105:					/* FIXME use sigaction and handle return values */
+main.c:119:	/* FIXME use sigaction and handle return */
+main.c:173:	char query[256];	/* FIXME constants are evil, use snprint and malloc */
+main.c:210:			if (!nw) { /* FIXME better */

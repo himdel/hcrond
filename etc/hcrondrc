@@ -1,0 +1,76 @@
+# sample hcrond config file
+
+# comments begin with #, whole line is ignored
+# empty lines are ignored
+# so is all whitespace other than newline
+# one 'option = "value"' per line, &quot;s can be omitted unless empty
+
+# the values used here are the defaults
+
+# bool values are expressed (case insensitively) with any of
+# 1, 0, true, false, yes, no
+
+# command line options have preference over these
+# there are other command line options:
+#  configfile - configfile filename
+#  help - show help
+#  version - show version
+
+# XXX Please note that many of the options are not yet implemented, see --help
+
+# pidfile - hcrond pidfile filename
+pidfile = /var/run/hcrond.pid
+
+# host - address (IP or hostname) of server running mysql
+host = 127.0.0.1
+
+# port - the port mysql listens to
+port = 666
+
+# user - username
+user = evil
+
+# pass - password
+pass = swordfish
+
+# dbnm - database name
+dbnm = hcrond
+
+# table - table name
+table = crontab
+
+# allow_root (bool) - allow running cmd with uid=0 or gid=0
+allow_root = no
+
+# allow_uidgid (bool) - allow running cmd with different uid && gid
+allow_uidgid = yes
+
+# force_uid - run everything with this uid or username
+force_uid = ""
+
+# force_gid - run everything with this gid or groupname
+force_gid = ""
+
+# force_hostname - use this hostname for comparison with `machine' field
+force_hostname = ""
+
+# ignore_machine (bool) - ignore the `machine' field
+ignore_machine = false
+
+# allow_notnice (bool) - allow negative nice values
+allow_notnice = false
+
+# force_shell - always use this shell
+force_shell = ""
+
+# force_shell_die (bool) - die if forced shell different from `sh'
+force_shell_die = true
+
+# reload - reload
+reload = 30
+
+# debug (bool) - debug mode (no detach and more verbosity)
+debug = false
+
+# max_jobs - keep only up to $max_jobs jobs running at the same time (0 = oo)
+max_jobs = 1
