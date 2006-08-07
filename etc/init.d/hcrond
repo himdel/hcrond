@@ -11,7 +11,7 @@ case "$1" in
 start)
 	log_begin_msg "Starting hcrond..."
         start-stop-daemon --start --quiet --pidfile $HCROND_PID --name hcrond --startas /usr/bin/hcrond -- $LSBNAMES
-        log_end_msg $?
+	log_end_msg $?
         ;;
 stop)   
 	log_begin_msg "Stopping hcrond..."

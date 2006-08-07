@@ -95,11 +95,17 @@ main(int argc, char **argv)
 	openlog("hcrond", LOG_PERROR | LOG_PID, LOG_CRON);
 	syslog(LOG_INFO, "start");
 
-	/* pidfile check 
-	 *
-	 * fopen(pidfile, "r");
-	 * todo but start-stop-daemon already handles it
-	 */
+	dbg("checking pidfile %s\n", pidfile);
+
+	/* pidfile check - start-stop-daemon does this, but TODO anyway */
+	FILE *fp = fopen(pidfile, "r");
+	if (fp != NULL) {
+		char fpid[6];
+		fgets(fpid, 6, fp);
+		dbg("pidfile exists, my pid=%d, it's pid=%s\n", getpid(), fpid);
+		// if xpid is a hcrond, die
+		fclose(fp);
+	}
 
 /* extern int allow_root;
  * extern int allow_uidgid;
@@ -120,7 +126,7 @@ main(int argc, char **argv)
 //					errf("signal: %s\n", strerror(errno));
 //					return 1;
 //				}
-//				break;
+				break;
 			case -1:
 				errf("fork: %s\n", strerror(errno));
 				return 1;
@@ -128,6 +134,31 @@ main(int argc, char **argv)
 				return 0;
 		}
 	}
+	
+	lock_init();
+	atexit(lock_kill);
+
+	/* create pidfile */
+	fp = fopen(pidfile, "w");
+	if (fp == NULL) {
+		errf("can't create pidfile: %s\ndying\n", strerror(errno));
+		return 1;	
+	}
+	fprintf(fp, "%d\n", getpid());
+	fclose(fp);
+	fp = fopen(pidfile, "r");
+	if (fp == NULL) {
+		errf("can't open pidfile: %s\ndying\n", strerror(errno));
+		return 1;	
+	}
+	char fpid[6];
+	fgets(fpid, 6, fp);
+	fclose(fp);
+	if (atoi(fpid) != getpid()) {
+		errf("wrong pid %s in pidfile - dying\n", fpid);
+		return 1;	
+	}
+	dbg("pid check ok\n");
 
 	/* schedule reloads */
 	/* FIXME use sigaction and handle return */
@@ -139,6 +170,7 @@ main(int argc, char **argv)
 	refresh(SIGALRM);
 	run_jobs();
 
+	dbg("exiting\n");
 	return 0;
 }
 
@@ -189,6 +221,7 @@ refresh(int sig)
 	/* update lastrun from whole curlst */
 	Jobs *act;
 	act = curlst;
+	dbg("updating\n");
 	while (act) {
 		sprintf(query, "UPDATE %s SET lastrun = '%d', runonce = '%d' WHERE id = %d", table, act->lastrun, act->runonce, act->id);
 		if (mysql_query(sql, query) != 0) 
@@ -197,6 +230,7 @@ refresh(int sig)
 	}
 
 	/* delete jobs with run */
+	dbg("deleting (mb)\n");
 	sprintf(query, "DELETE FROM %s WHERE runonce = 0", table);
 	if (mysql_query(sql, query) != 0) 
 		err("mysql_query (DELETE)");
@@ -217,6 +251,7 @@ refresh(int sig)
  * 	for(i = 0; i < num_fields; i++)
  * 		printf("Field %u is %s\n", i, fields[i].name);
  */
+	dbg("selecting\n");
 
 	MYSQL_RES *res;
 	MYSQL_ROW row;
@@ -332,6 +367,7 @@ run_this(char *cmd)
 			exit(1);
 			break;
 	}
+	dbg("run_this out\n");
 }
 
 
@@ -376,6 +412,7 @@ run_jobs(void)
 		dbg("sleeping for %d sec\n", ttc);
 		usleep(ttc * 1000000);
 	}
+	dbg("%d\n", __LINE__);
 }
 /* l8r:
  * char hname[HOST_NAME_MAX + 1];
@@ -409,6 +446,7 @@ childcare(int sig)
 		run_this(cmd);
 		free(cmd);
 	}
+	dbg("%d\n", __LINE__);
 }
 
 
@@ -457,6 +495,7 @@ nmin:	while (!isin(j->min, tim->tm_min, LIMO_MIN)) {
 	}
 	dbg("job %s will be run in %d sec (%04d-%02d-%02d %02d:%02d:%02d)\n", j->name, (int) (tm - time(NULL)), 1900 + tim->tm_year, tim->tm_mon, tim->tm_mday, tim->tm_hour, tim->tm_min, tim->tm_sec);
 	j->nextrun = tm;
+	dbg("%d\n", __LINE__);
 }
 
 
@@ -535,6 +574,7 @@ isin(const char *z, int v, const char *limo)
 		}
 	} while (!e);
 
+	dbg("%d\n", __LINE__);
 	return 0;
 }
 
@@ -574,6 +614,7 @@ trans(char **in, const char *foo, const char *bar)
 
 	free(*in);
 	*in = x;
+	dbg("%d\n", __LINE__);
 }
 
 
@@ -605,6 +646,7 @@ addQ(const char *cmd)
 	if (job_queue_count % 10 == 0)
 		warnf("warning: queue contains %d items\n", job_queue_count);
 	UNLOCK;
+	dbg("%d\n", __LINE__);
 }
 
 
@@ -612,6 +654,7 @@ addQ(const char *cmd)
 char *
 getQ(int lock)
 {
+	dbg("%d\n", __LINE__);
 	char *s = NULL;
 	JoQ *b = NULL;
 	if(lock)
@@ -625,5 +668,6 @@ getQ(int lock)
 		UNLOCK;
 	s = b->cmd;
 	free(b);
+	dbg("%d\n", __LINE__);
 	return s;
 }
