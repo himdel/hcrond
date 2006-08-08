@@ -1,7 +1,11 @@
 CC=gcc
 LD=gcc
-CFLAGS=-std=c99 -pedantic -Wall -W
-LDFLAGS=-lmysqlclient
+
+# gnu99 note: sorry, I can't compile main.c (sigaction stuff) with -std=c99
+#	 don't know why. So I use gnu99. If you don't use gcc, try c99 and
+#	 propably don't forget to uncomment __USE_POSIX in locks.c
+CFLAGS=-std=gnu99 -pedantic -Wall -W
+LDFLAGS=-lmysqlclient -lpthread
 LEX=flex
 
 OBJS=options.o main.o locks.o

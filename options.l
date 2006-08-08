@@ -70,8 +70,7 @@ int
 unbool(char *s)
 {
 	if (s == NULL)
-		return -1;
-
+		return 1;
 	char *bar = strchr(s, '"');
 	if (bar) 
 		*bar = 0; 
@@ -176,7 +175,6 @@ optmain(int argc, char **argv)
 
 	int c;
 	while ((c = getopt_long(argc, argv, "c:P:h:o:u:p:d:t:R::g::U:G:H:i::n::s:D::r:e::j:V", lo, NULL)) != -1) {
-		printf("opt %c = %s\n", c, optarg); 
                 switch(c) {
 			case 'c':
 				cp(configfile);

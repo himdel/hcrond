@@ -24,11 +24,19 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <stdio.h>
-#define __USE_BSD
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
 #include <signal.h>
+
+#ifdef __USE_BSD
+#include <unistd.h>
+#else
+#define __USE_BSD
+#include <unistd.h>
+#undef __USE_BSD
+#endif
+
 #include <time.h>
 #include <errno.h>
 #include <mysql/mysql.h>
@@ -121,11 +129,7 @@ main(int argc, char **argv)
 		switch (fork()) {
 			case 0:
 				setsid();
-//				if (signal(SIGCHLD, SIG_IGN) == SIG_ERR) {
-					/* FIXME use sigaction and handle return values */
-//					errf("signal: %s\n", strerror(errno));
-//					return 1;
-//				}
+				dbg("fork allright\n");
 				break;
 			case -1:
 				errf("fork: %s\n", strerror(errno));
@@ -160,12 +164,40 @@ main(int argc, char **argv)
 	}
 	dbg("pid check ok\n");
 
-	/* schedule reloads */
-	/* FIXME use sigaction and handle return */
-	signal(SIGALRM, refresh);
-	signal(SIGCHLD, childcare);
-	
-	/* TODO handle SIGHUP, etc */
+	/* signals
+	 * - reloading from db is done on SIGALRM
+	 *  - if max_jobs > 0 (that is, the number of concurrent tasks
+	 *    is limited) SIGCHLD starts new tasks
+	 */
+	struct sigaction sa, sb;
+	int n = 0;
+
+	sa.sa_handler = refresh;
+	sa.sa_flags = SA_NOCLDSTOP | SA_RESTART;
+	n += sigemptyset(&sa.sa_mask);
+	n += sigaddset(&sa.sa_mask, SIGCHLD);
+	n += sigaction(SIGALRM, &sa, NULL);
+	if (n != 0) {
+		errf("can't setup SIGALRM handler - dying\n");
+		return 1;
+	}
+
+	n = 0;
+	sb.sa_handler = childcare;
+	sb.sa_flags = SA_RESTART;
+	n += sigemptyset(&sb.sa_mask);
+	n += sigaddset(&sb.sa_mask, SIGALRM);
+	n += sigaction(SIGCHLD, &sb, NULL);
+	if (n != 0) {
+		if (max_jobs != 0) {
+			errf("can't setup SIGCHLD handler - dying\n");
+			return 1;
+		} else {
+			warnf("can't setup SIGCHLD handler\n");
+		}
+	}
+
+	/* TODO handle SIGHUP */
 
 	refresh(SIGALRM);
 	run_jobs();
@@ -179,17 +211,18 @@ void
 refresh(int sig)
 {	/* remember not to kill stuff used by run_jobs, just mv to gclst */
 /* TODO pass gclst and curlst and if entry in both, solve (so as not to forgot lastrun */
+//	dbg("refresh_in\n");
+	
 	if (sig != SIGALRM) {
-		errf("sanity check failure in refresh\n");
+//		errf("sanity check failure in refresh\n");
 		return;
 	}
 
 	alarm(reload);
-	signal(SIGALRM, refresh);
 
 	/* free stuff in gclst */
 	while (gclst) {
-		dbg("killing %s\n", gclst->name);
+//		dbg("killing %s\n", gclst->name);
 		Gree(sec);
 		Gree(min);
 		Gree(hour);
@@ -207,34 +240,35 @@ refresh(int sig)
 	/* open db */
 	MYSQL *sql = mysql_init(NULL);
 	if (!sql) { 
-		err("mysql_init");
+//		err("mysql_init");
 		return;
 	}
 	if (!mysql_real_connect(sql, host, user, pass, dbnm, port, NULL, 0)) {
-		err("mysql_real_connect");
+//		err("mysql_real_connect");
 		return;
 	}
-	dbg("connected to mysql\n");
+//	dbg("connected to mysql\n");
 
 	char query[256];	/* FIXME constants are evil, use snprint and malloc */
 
 	/* update lastrun from whole curlst */
 	Jobs *act;
 	act = curlst;
-	dbg("updating\n");
+//	dbg("updating\n");
 	while (act) {
 		sprintf(query, "UPDATE %s SET lastrun = '%d', runonce = '%d' WHERE id = %d", table, act->lastrun, act->runonce, act->id);
-		if (mysql_query(sql, query) != 0) 
-			err("mysql_query (UPDATE)");
+		if (mysql_query(sql, query) != 0) {
+//			err("mysql_query (UPDATE)");
+		}
 		act = act->n;
 	}
 
 	/* delete jobs with run */
-	dbg("deleting (mb)\n");
+//	dbg("deleting (mb)\n");
 	sprintf(query, "DELETE FROM %s WHERE runonce = 0", table);
-	if (mysql_query(sql, query) != 0) 
-		err("mysql_query (DELETE)");
-
+	if (mysql_query(sql, query) != 0) {
+//		err("mysql_query (DELETE)");
+	}
 	/* curlst becomes new gclst; later ->n's are set to point to new curlst */
 	gclst = curlst;
 	curlst = NULL;
@@ -251,7 +285,7 @@ refresh(int sig)
  * 	for(i = 0; i < num_fields; i++)
  * 		printf("Field %u is %s\n", i, fields[i].name);
  */
-	dbg("selecting\n");
+//	dbg("selecting\n");
 
 	MYSQL_RES *res;
 	MYSQL_ROW row;
@@ -262,7 +296,7 @@ refresh(int sig)
 			Jobs *nw;
 			nw = malloc(sizeof(Jobs));
 			if (!nw) { /* FIXME better */
-				errf("malloc: %s\n", strerror(errno));
+//				errf("malloc: %s\n", strerror(errno));
 				return;
 			}
 			nw->id = atoi(row[0]);
@@ -309,7 +343,7 @@ refresh(int sig)
 			trans(&nw->mon, "*", LIMO_MON);
 			trans(&nw->dow, "*", LIMO_DOW);
 			
-			dbg("job %s (%s): %s %s %s %s %s %s %c\n", nw->name, nw->cmd, nw->sec, nw->min, nw->hour, nw->day, nw->mon, nw->dow, nw->andor);
+//			dbg("job %s (%s): %s %s %s %s %s %s %c\n", nw->name, nw->cmd, nw->sec, nw->min, nw->hour, nw->day, nw->mon, nw->dow, nw->andor);
 
 			gnerun(nw);	/* update nw->nextrun */
 
@@ -328,18 +362,23 @@ refresh(int sig)
 	
 	/* close db */
 	mysql_close(sql);
-	dbg("disconnect");
+//	dbg("disconnect");
 }
 
 /* run_this - TODO comment
  *	 called by
  *	  -run_jobs (scheduled for now)
  *	  -childcare (a job has ended so we can run another)
+ *
+ *	TODO run_this shouldnt be called by childcare in debug mode
+ *	 	maybe if run_this added to Q dont sleep N sec but just one
+ *	 	and upon starting run_this, check the Q and jobs_running
  */
 void
 run_this(char *cmd)
 {
 	dbg("run_this(\"%s\")\n", cmd);
+	LOCKED(dbg("jobs_running=%d\n", jobs_running));
 	if (max_jobs != 0) {
 		if (jobs_running >= max_jobs) {
 			dbg("queueing %s\n", cmd);
@@ -355,7 +394,7 @@ run_this(char *cmd)
 			return;
 		case 0:
 			/* TODO handle uid, gid and nice*/
-			/// setuid(uid);
+			// setuid(uid);
 			// setgid(gid);
 			dbg("running %s\n", cmd);
 			
@@ -366,6 +405,8 @@ run_this(char *cmd)
 			errf("something amiss\n");
 			exit(1);
 			break;
+		default:
+			dbg("fork went well\n");
 	}
 	dbg("run_this out\n");
 }
@@ -410,6 +451,7 @@ run_jobs(void)
 			s = s->n;
 		}
 		dbg("sleeping for %d sec\n", ttc);
+		// TODO use nanosleep
 		usleep(ttc * 1000000);
 	}
 	dbg("%d\n", __LINE__);
@@ -424,29 +466,34 @@ run_jobs(void)
 void
 childcare(int sig)
 {	
+//	dbg("childcare_in (sig=%d, SIGCHLD=%d)\n", sig, SIGCHLD);
 	if (sig != SIGCHLD)
 		return;
 
-	signal(SIGCHLD, childcare);
-	
 	int st, pid;
-	pid = wait(&st);
-
-	inf("%d is dead\n", pid);
-	/* TODO syslog name and status */
+//	dbg("quork?\n");
+	pid = waitpid(-1, &st, WNOHANG);
 	
-	LOCKED(jobs_running--);
-
-	char *cmd = NULL;
-	LOCK;
-	if (job_queue_count)
-		cmd = getQ(0);
-	UNLOCK;
-	if (cmd) {
-		run_this(cmd);
-		free(cmd);
+	/* please don't remove the braces, dbg is a macro */
+	if (pid == -1) {
+//		dbg("waitpid error, weird\n");
+	} else if (pid == 0) {
+//		dbg("no child has terminated yet a SIGCHILD was delivered\n");
+	} else {
+//		inf("%d is dead, status %d\n", pid, WEXITSTATUS(st));
+		LOCKED(jobs_running--);
+	
+		char *cmd = NULL;
+		LOCK;
+		if (job_queue_count)
+			cmd = getQ(0);
+		UNLOCK;
+		if (cmd) {
+			run_this(cmd);
+			free(cmd);
+		}
 	}
-	dbg("%d\n", __LINE__);
+//	dbg("%d\n", __LINE__);
 }
 
 
@@ -614,7 +661,7 @@ trans(char **in, const char *foo, const char *bar)
 
 	free(*in);
 	*in = x;
-	dbg("%d\n", __LINE__);
+	dbg("trans out %d\n", __LINE__);
 }
 
 
@@ -654,18 +701,20 @@ addQ(const char *cmd)
 char *
 getQ(int lock)
 {
-	dbg("%d\n", __LINE__);
+	dbg("getQ %d (lock=%d)\n", __LINE__, lock);
 	char *s = NULL;
 	JoQ *b = NULL;
-	if(lock)
+	if (lock) {
 		LOCK;
+	}
 	if ((b = job_queue_start))
 		job_queue_start = b->n;
 	if (b->n == NULL)
 		job_queue_end = NULL;
 	job_queue_count--;
-	if(lock)
+	if (lock) {
 		UNLOCK;
+	}
 	s = b->cmd;
 	free(b);
 	dbg("%d\n", __LINE__);

@@ -1,27 +1,19 @@
-
-* bugs *
-
-options.l:	nefunguje -e, --debug ani --debug 1
-
-
-* features *
-
-ChangeLog:TODO
-README:TODO
-etc/init.d/hcrond: get pidfile from /etc/hcrondrc
-options.c:1477:	/* TODO. We should be able to replace this entire function body
-main.c:123:	/* TODO handle SIGHUP, etc */
-main.c:189:/* TODO fields by name - using this:
-main.c:259:			/* TODO handle uid, gid and nice*/
-main.c:327:	/* TODO eventually do something clever like sysloging name and status
-main.c:333:/* TODO add option timezone - expecting UTC */
-main.c:334:/* TODO negative options */
+options.l:	options with a param on cmdline are parsed wrong
 *.[clh]: comment properly
 
-
-* incoming *
-
-main.c:105:					/* FIXME use sigaction and handle return values */
-main.c:119:	/* FIXME use sigaction and handle return */
-main.c:173:	char query[256];	/* FIXME constants are evil, use snprint and malloc */
-main.c:210:			if (!nw) { /* FIXME better */
+ChangeLog:TODO
+README: * TODO negative numbers signify frequency (sec == -2 => run twice per sec)
+main.c:	/* pidfile check - start-stop-daemon does this, but TODO anyway */
+main.c:	/* TODO handle SIGHUP */
+main.c:/* TODO pass gclst and curlst and if entry in both, solve (so as not to forgot lastrun */
+main.c:/* TODO fields by name - using this:
+main.c:/* run_this - TODO comment
+main.c: *	TODO run_this shouldnt be called by childcare in debug mode
+main.c:			/* TODO handle uid, gid and nice*/
+main.c:		// TODO use nanosleep
+main.c:/* TODO add option timezone - expecting UTC */
+main.c:/* TODO negative options */
+main.c:	char query[256];	/* FIXME constants are evil, use snprint and malloc */
+main.c:			if (!nw) { /* FIXME better */
+main.c:			/* FIXME get from locale maybe */
+main.c:// FIXME check validity of string first (must be /^[0-9]+-[0-9]+$/)

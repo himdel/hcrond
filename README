@@ -3,6 +3,9 @@
  *  Copyright 2006 Martin Hradil <himdel@seznam.cz>
  *  Licensed under GPL the terms of which can be found in the file COPYING.
 
+
+ * TODO update
+
  * table:
  * id = unique identifier
  * sec = 0..59
