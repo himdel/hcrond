@@ -3,11 +3,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <string.h>
 #define _GNU_SOURCE
 #include <getopt.h>
 
 #include "options.h"
 #include "version.h"
+#include "compat.h"
 
 char *configfile = NULL;
 char *pidfile = NULL;
@@ -29,6 +31,7 @@ int force_shell_die = -1;
 int debug = -1;
 int reload = -1;
 int max_jobs = -1;
+int kill = 0;	/* directly setting default */
 
 #define sop(s,c) \
 	if (!s) { \
@@ -100,6 +103,7 @@ unbool(char *s)
 configfile.*		/* ignored */	
 help			/* ignored */
 version			/* ignored */
+kill			/* ignored */
 pidfile.*		sop(pidfile, 7);
 host.*			sop(host, 4);
 port.*			iop(port, 4);
@@ -161,18 +165,12 @@ optmain(int argc, char **argv)
                 { "debug",		2,	NULL,	'e' },
 		{ "max_jobs",		1,	NULL,	'j' },
                 { "version",		0,	NULL,   'V' },
+                { "kill",		0,	NULL,   'k' },
                 { "help",		0,	NULL,   0 },
                 { NULL,			0,	NULL,   0 }
         };
 	
-#define cp(s) \
- s = malloc(strlen(optarg) + 1); \
- if (!s) { \
-  perror("malloc"); \
-  exit(1); \
- } \
- strcpy(s, optarg);
-
+#define cp(s) (s) = strdup(optarg)
 	int c;
 	while ((c = getopt_long(argc, argv, "c:P:h:o:u:p:d:t:R::g::U:G:H:i::n::s:D::r:e::j:V", lo, NULL)) != -1) {
                 switch(c) {
@@ -236,6 +234,9 @@ optmain(int argc, char **argv)
 			case 'e':
 				debug = unbool(optarg);
 				break;
+                        case 'k':
+				kill = 1;
+				break;
                         case 'V':
 				version();
 			default:
@@ -287,6 +288,7 @@ optmain(int argc, char **argv)
 	if (max_jobs < 0)
 		max_jobs = 1;
 	/* force_{uid,gid,hostname,shell} default to NULL */
+	/* kill to 0 */
 
 	return 0;
 }

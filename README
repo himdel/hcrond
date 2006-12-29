@@ -1,4 +1,6 @@
- * hcrond - a cron with crontab in mysql
+NOTE: if it segfaults, try the -nopid version, see the news on sourceforge.
+
+* hcrond - a cron with crontab in mysql
  *
  *  Copyright 2006 Martin Hradil <himdel@seznam.cz>
  *  Licensed under GPL the terms of which can be found in the file COPYING.
@@ -27,7 +29,7 @@
  * standard cron syntax is supported, so "1-5/2" == "1,3,5" = 
  *  = "Mon,Wed,Fri" or "Jan,Mar,May" and * is every
  *
- * TODO negative numbers signify frequency (sec == -2 => run twice per sec)
+ * TODO negative numbers signify frequency (except for sec) (min == -2 => run twice per min)
 
 Usage: hcrond [OPTION]...
 hcrond is a cron with crontab in mysql
@@ -79,3 +81,8 @@ CREATE TABLE `hcrondtab` (
 `lastrun` INT NULL DEFAULT '0',
 `runonce` INT DEFAULT '-1' NOT NULL
 ) ENGINE = MYISAM ;
+
+Thanks to:
+	moonlake.cz		for sponsoring this project
+	libdaemon authors	for libdaemon
+	sourceforge.net		for hosting both hcrond and libdaemon

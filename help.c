@@ -28,6 +28,7 @@ help()
 		"  -r, --reload\t\treload from table every n secs (30)\n"
 		"  -j, --max-jobs\t\trun only n jobs at a time; 0 means infinity (1)\n"
 		"  -e, --debug\t\tdebug mode (no detach and more verbosity) (bool:no)\n"
+		"  -k, --kill\t\tkill already running hcrond\n"
 		"  --help\t\tdisplay this help and exit\n"
 		"  -V, --version\t\toutput version information and exit\n\n"
 		"Report bugs to <himdel@seznam.cz>.\n");

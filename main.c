@@ -28,31 +28,27 @@
 #include <string.h>
 #include <stdlib.h>
 #include <signal.h>
-
-#ifdef __USE_BSD
-#include <unistd.h>
-#else
-#define __USE_BSD
-#include <unistd.h>
-#undef __USE_BSD
-#endif
-
+#include <stdarg.h>
 #include <time.h>
 #include <errno.h>
 #include <mysql/mysql.h>
+#include <libdaemon/dfork.h>
+#include <libdaemon/dlog.h>
+#include <libdaemon/dpid.h>
+#include <libdaemon/dsignal.h>
 
 #include "options.h"
-#include "locks.h"
 #include "logs.h"
+#include "compat.h"
 
 #ifndef HOST_NAME_MAX
 #define HOST_NAME_MAX 64
 #endif
 
-#define Free(x) if (x)\
-	free((x))		
-#define Gree(x) Free(gclst->x)
+#define Free(x) { if (x) free(x); x = NULL; }
+#define Gree(x) Free(jlst->x)
 
+/* for isin() */
 #define LIMO_SEC "0-59"
 #define LIMO_MIN "0-59"
 #define LIMO_HOUR "0-23"
@@ -62,167 +58,298 @@
 
 extern char **environ;
 
+/* job list - TODO tree */
 typedef struct Jobs Jobs;
 struct Jobs {
 	int id;
 	int lastrun, nextrun;
 	char *sec, *min, *hour, *day, *mon, *dow;
   	int andor;
-	int uid, gid, nice;
+	int uid, gid, nic;
 	char *cmd, *name;
 	int runonce;
-	Jobs *n, *gn;
+	Jobs *n;
 };
-Jobs *curlst = NULL, *gclst = NULL;
+Jobs *jlst = NULL;
 
+/* jobs queue */
 typedef struct JoQ JoQ;
 struct JoQ {
 	char *cmd; 
+	int uid, gid, nic;
 	JoQ *n;
 };
 JoQ *job_queue_end = NULL, *job_queue_start = NULL;
 int jobs_running = 0, job_queue_count = 0;
 
-void addQ(const char *cmd);	/* adds copy of cmd to the job queue */
-char *getQ(int lock);		/* gets the same (lock? is a bool) */
-void run_jobs(void);
-void refresh(int sig);
-void run_this(char *cmd);
-void childcare(int sig);
-void gnerun(Jobs *j);		/* updates j->nextrun */
-int isin(const char *z, int v, const char *limo);	/* is v in s? (bool); limo = "0-59" */
-void trans(char **in, const char *foo, const char *bar);	/* trans - (*in) =~ s/$foo/$bar/g; */
+int main(int argc, char **argv);
+int run_jobs(void);
+MYSQL *db_connect();
+int db_update(MYSQL *sql, Jobs *j);
+Jobs *refresh(Jobs *jlst, int load);
+void run_this(const char *cmd, int uid, int gid, int nic);
+void childcare(void);
+void gnerun(Jobs *j);
+int isin(const char *z, int v, const char *limo);
+void trans(char **in, const char *foo, const char *bar);
+void addQ(const char *cmd, int uid, int gid, int nic);
+char *getQ(int *uid, int *gid, int *nic);
+const char *pidnaam(void);
+int queryf(MYSQL *sql, const char *fmt, ...);
+int maybe_atoi(const char *s, int x);
 
 
 
+/* main main */
 int
 main(int argc, char **argv)
 {
+	/* options */
 	optmain(argc, argv);
 	
-	openlog("hcrond", LOG_PERROR | LOG_PID, LOG_CRON);
-	syslog(LOG_INFO, "start");
+	/* SIGINT running hcrond */
+	if (kill) {
+		int ret;
 
-	dbg("checking pidfile %s\n", pidfile);
+		#ifdef DAEMON_PID_FILE_KILL_WAIT_AVAILABLE
+		if ((ret = daemon_pid_file_kill_wait(SIGINT, 5)) < 0)
+		#else
+		if ((ret = daemon_pid_file_kill(SIGINT)) < 0)
+		#endif
+			wrn("Failed to kill daemon");
 
-	/* pidfile check - start-stop-daemon does this, but TODO anyway */
-	FILE *fp = fopen(pidfile, "r");
-	if (fp != NULL) {
-		char fpid[6];
-		fgets(fpid, 6, fp);
-		dbg("pidfile exists, my pid=%d, it's pid=%s\n", getpid(), fpid);
-		// if xpid is a hcrond, die
-		fclose(fp);
+		return (ret < 0) ? 1 : 0;
 	}
 
-/* extern int allow_root;
- * extern int allow_uidgid;
- * extern int force_uid;
- * extern int force_gid;
- * extern char *force_hostname;
- * extern int ignore_machine;
- * extern int allow_notnice;
- * extern char *force_shell;
- * extern int force_shell_die;
- */
+	/* start log */
+	daemon_log_ident = "hcrond";
+	daemon_log_use = DAEMON_LOG_AUTO | (debug ? DAEMON_LOG_STDERR : 0);
+
+	/* fork */
 	if (!debug) {
-		switch (fork()) {
-			case 0:
-				setsid();
-				dbg("fork allright\n");
+		daemon_retval_init();
+		switch (daemon_fork()) {
+			case 0: /* now a proper little daemon child */
+				daemon_retval_send(42);
 				break;
-			case -1:
-				errf("fork: %s\n", strerror(errno));
+			case -1: /* fork error */
+				err("fork: %s", strerror(errno));
+				daemon_retval_done();
 				return 1;
-			default:
+			default: /* parent dies */
+				if (daemon_retval_wait(16) != 42)
+					wrn("didn't recieve proper notification from the daemon");
 				return 0;
 		}
 	}
+	inf(debug ? "start (debug = 1)" : "start");
 	
-	lock_init();
-	atexit(lock_kill);
-
-	/* create pidfile */
-	fp = fopen(pidfile, "w");
-	if (fp == NULL) {
-		errf("can't create pidfile: %s\ndying\n", strerror(errno));
-		return 1;	
+	/* pidfile */
+	pid_t pid;
+	daemon_pid_file_proc = pidnaam;
+	if (daemon_pid_file_create() != 0) {
+		pid_t pid;
+		pid = daemon_pid_file_is_running();
+		if (pid < 0)
+			err("unknown pidfile error");
+		else
+			err("pidfile already exists - for pid %d", pid);
+		return 1;
 	}
-	fprintf(fp, "%d\n", getpid());
-	fclose(fp);
-	fp = fopen(pidfile, "r");
-	if (fp == NULL) {
-		errf("can't open pidfile: %s\ndying\n", strerror(errno));
-		return 1;	
-	}
-	char fpid[6];
-	fgets(fpid, 6, fp);
-	fclose(fp);
-	if (atoi(fpid) != getpid()) {
-		errf("wrong pid %s in pidfile - dying\n", fpid);
-		return 1;	
-	}
-	dbg("pid check ok\n");
+	atexit((void (*)(void)) daemon_pid_file_remove);
 
-	/* signals
-	 * - reloading from db is done on SIGALRM
-	 *  - if max_jobs > 0 (that is, the number of concurrent tasks
-	 *    is limited) SIGCHLD starts new tasks
-	 */
-	struct sigaction sa, sb;
-	int n = 0;
-
-	sa.sa_handler = refresh;
-	sa.sa_flags = SA_NOCLDSTOP | SA_RESTART;
-	n += sigemptyset(&sa.sa_mask);
-	n += sigaddset(&sa.sa_mask, SIGCHLD);
-	n += sigaction(SIGALRM, &sa, NULL);
-	if (n != 0) {
-		errf("can't setup SIGALRM handler - dying\n");
+	if (((pid = daemon_pid_file_is_running()) > 0) && (pid != getpid())) {
+		err("already running with pid %u", pid);
 		return 1;
 	}
 
-	n = 0;
-	sb.sa_handler = childcare;
-	sb.sa_flags = SA_RESTART;
-	n += sigemptyset(&sb.sa_mask);
-	n += sigaddset(&sb.sa_mask, SIGALRM);
-	n += sigaction(SIGCHLD, &sb, NULL);
-	if (n != 0) {
-		if (max_jobs != 0) {
-			errf("can't setup SIGCHLD handler - dying\n");
-			return 1;
-		} else {
-			warnf("can't setup SIGCHLD handler\n");
-		}
+	/** signals
+	 *  - reloading from db is done on SIGALRM
+	 *  - if jobs_running < max_jobs, SIGCHLD starts new tasks
+	 */
+	if (daemon_signal_init(SIGALRM, SIGCHLD, SIGINT, SIGQUIT, SIGHUP, 0) != 0) {
+		err("can't establish signal handlers: %s", strerror(errno));
+		inf("hcrond currently depends on signals");
+		return 1;
+	}
+	atexit(daemon_signal_done);
+
+	/* start looping - SIGALRM used to cause reload from db */
+	int ret;
+	raise(SIGALRM);
+	ret = run_jobs();
+	
+	switch(ret) {
+		case SIGINT:
+			inf("exitting on SIGINT");
+			break;
+		case SIGQUIT:
+			inf("exitting on SIGQUIT");
+			break;
+		case SIGHUP:
+			inf("SIGHUP - restarting");
+			break;
+		default:
+			inf("exitting on error");
 	}
 
-	/* TODO handle SIGHUP */
+	if (ret == SIGHUP) {	/* reload, not die */
+		daemon_pid_file_remove();
+		daemon_signal_done();
+		execvp(argv[0], argv);
+		/* something's terribly wrong */
+		err("sorry, can't reload, dying");
+		_exit(1);
+	}
 
-	refresh(SIGALRM);
-	run_jobs();
+	/** done by atexit:
+	 *	daemon_pid_file_remove();
+	 *	daemon_signal_done();
+	 */
 
-	dbg("exiting\n");
 	return 0;
 }
 
 
-void
-refresh(int sig)
-{	/* remember not to kill stuff used by run_jobs, just mv to gclst */
-/* TODO pass gclst and curlst and if entry in both, solve (so as not to forgot lastrun */
-//	dbg("refresh_in\n");
+/* run_jobs - main job loop - handles jobs and signals */
+int
+run_jobs(void)
+{
+	for (;;) {
+		int sig = daemon_signal_next();
+		if (sig < 0)
+			wrn("daemon_signal_next: %d", sig);
+		else if (sig > 0)
+			switch(sig) {
+				case SIGALRM:
+					jlst = refresh(jlst, 1);
+					alarm(reload);
+					break;
+				case SIGCHLD:
+					childcare();
+					break;
+				default:	/* SIGINT, SIGQUIT, SIGHUP */
+					refresh(jlst, 0);
+					/* TODO the queue shouldn't be forgotten!!! */
+					return sig;
+			}
+		
+		/* TODO can select now if ((ttc > 0) || (max_jobs && (jobs_running >= max_jobs))) when have tree */
+
+		Jobs *s = jlst;
+		time_t tm = time(NULL);
+		while (s) {
+			if (s->runonce == 0) { /* -1 = eternal, 0 = no longer, n = n times yet */
+				s = s->n;
+				continue;
+			}
+			if ((tm >= s->nextrun) && (s->lastrun != tm)) {
+				s->lastrun = tm;
+				if (s->runonce > 0) {
+					s->runonce--;
+					dbg("job %s will run %d times yet\n", s->name, s->runonce);
+				}
+				run_this(s->cmd, s->uid, s->gid, s->nic);
+				gnerun(s);
+			}
+			s = s->n;
+		}
+		// TODO use daemon_signal_fd with select instead (so can use ttc)
+		usleep(1000000);
+	}
+}
+
+
+/* db_connect - connect to the db */
+MYSQL *
+db_connect()
+{
+	MYSQL *sql = mysql_init(NULL);
+	if (!sql) { 
+		err("mysql_init: %s", mysql_error(sql));
+		return NULL;
+	}
+	if (!mysql_real_connect(sql, host, user, pass, dbnm, port, NULL, 0)) {
+		err("mysql_real_connect: %s", mysql_error(sql));
+		mysql_close(sql);
+		return NULL;
+	}
+	dbg("connected to mysql\n");
+	return sql;
+}
+
+
+/* queryf - formatted query */
+int
+queryf(MYSQL *sql, const char *fmt, ...)
+{
+	int n;
+	char *s = NULL, z[1];
+	va_list ap;
 	
-	if (sig != SIGALRM) {
-//		errf("sanity check failure in refresh\n");
-		return;
+	va_start(ap, fmt);
+	n = vsnprintf(z, 1, fmt, ap);
+	va_end(ap);
+	
+	s = malloc((n + 1) * sizeof(char));
+	if (!s) {
+		err("queryf: not enough memory for query");
+		return -1;
+	}
+	
+	va_start(ap, fmt);
+	vsnprintf(s, n + 1, fmt, ap);
+	va_end(ap);
+	
+	n = mysql_query(sql, s);
+	free(s);
+	return n;
+}
+
+
+/* db_update - update lastrun and runonce in the table, remove run_once == 0 */
+int
+db_update(MYSQL *sql, Jobs *j)
+{
+	int e = 0;
+
+	while (j) {
+		if (queryf(sql, "UPDATE %s SET lastrun = '%d', runonce = '%d' WHERE id = %d", table, j->lastrun, j->runonce, j->id) != 0) {
+			err("mysql_query (UPDATE): %s", mysql_error(sql));
+			e++;
+		}
+		j = j->n;
 	}
 
-	alarm(reload);
+	if (queryf(sql, "DELETE FROM %s WHERE runonce = 0", table) != 0) {
+		err("mysql_query (DELETE): %s", mysql_error(sql));
+		e++;
+	}
 
-	/* free stuff in gclst */
-	while (gclst) {
-//		dbg("killing %s\n", gclst->name);
+	return e;
+}
+
+/* refresh - updates the db and if load, reloads */
+Jobs *
+refresh(Jobs *jlst, int load)
+{	
+	MYSQL *sql;
+
+	/* connect */
+	if (!(sql = db_connect())) {
+		wrn("failed to connect to the db, using the old list");
+	 	return jlst;
+	}
+	
+	/* update lastrun and runonce in the table */
+	if (jlst) {
+		int n;
+		if ((n = db_update(sql, jlst)) != 0)
+			wrn("db_update failed %d times, your problem", n);
+	}
+	
+	/* clean the list */
+	while (jlst) {
 		Gree(sec);
 		Gree(min);
 		Gree(hour);
@@ -232,87 +359,45 @@ refresh(int sig)
 		Gree(cmd);
 		Gree(name);
 
-		Jobs *x = gclst;
-		gclst = gclst->gn;
+		Jobs *x = jlst;
+		jlst = x->n;
 		free(x);
 	}
+	jlst = NULL;	/* no-op */
 
-	/* open db */
-	MYSQL *sql = mysql_init(NULL);
-	if (!sql) { 
-//		err("mysql_init");
-		return;
-	}
-	if (!mysql_real_connect(sql, host, user, pass, dbnm, port, NULL, 0)) {
-//		err("mysql_real_connect");
-		return;
-	}
-//	dbg("connected to mysql\n");
-
-	char query[256];	/* FIXME constants are evil, use snprint and malloc */
-
-	/* update lastrun from whole curlst */
-	Jobs *act;
-	act = curlst;
-//	dbg("updating\n");
-	while (act) {
-		sprintf(query, "UPDATE %s SET lastrun = '%d', runonce = '%d' WHERE id = %d", table, act->lastrun, act->runonce, act->id);
-		if (mysql_query(sql, query) != 0) {
-//			err("mysql_query (UPDATE)");
-		}
-		act = act->n;
+	if (!load) {	/* just updating (before death) */
+		mysql_close(sql);
+		return NULL;
 	}
 
-	/* delete jobs with run */
-//	dbg("deleting (mb)\n");
-	sprintf(query, "DELETE FROM %s WHERE runonce = 0", table);
-	if (mysql_query(sql, query) != 0) {
-//		err("mysql_query (DELETE)");
-	}
-	/* curlst becomes new gclst; later ->n's are set to point to new curlst */
-	gclst = curlst;
-	curlst = NULL;
-
-/* TODO fields by name - using this:
- *
- * 	unsigned int num_fields;
- * 	unsigned int i;
- * 	MYSQL_FIELD *fields;
- * 	
- * 	num_fields = mysql_num_fields(result);
- * 	fields = mysql_fetch_fields(result);
- *
- * 	for(i = 0; i < num_fields; i++)
- * 		printf("Field %u is %s\n", i, fields[i].name);
- */
-//	dbg("selecting\n");
-
+	/* load anew */
 	MYSQL_RES *res;
-	MYSQL_ROW row;
-	sprintf(query, "SELECT * FROM %s ORDER BY id", table);
-	res = (mysql_query(sql, query) == 0) ? mysql_store_result(sql) : NULL;
-	if (res)
+	res = (queryf(sql, "SELECT * FROM %s ORDER BY id", table) == 0) ? mysql_store_result(sql) : NULL;
+	if (res) {
+		MYSQL_ROW row;
 		for (int i = 0; (row = mysql_fetch_row(res)); i++) {
 			Jobs *nw;
 			nw = malloc(sizeof(Jobs));
-			if (!nw) { /* FIXME better */
-//				errf("malloc: %s\n", strerror(errno));
-				return;
+			if (!nw) {
+				err("malloc: %s", strerror(errno));
+				break;
 			}
 			nw->id = atoi(row[0]);
 			nw->lastrun = atoi(row[14]);
-			scp(nw->sec, row[1]);
-			scp(nw->min, row[2]);
-			scp(nw->hour, row[3]);
-			scp(nw->day, row[4]);
-			scp(nw->mon, row[5]);
-			scp(nw->dow, row[6]);
+			nw->sec = strdup(row[1]);
+			nw->min = strdup(row[2]);
+			nw->hour = strdup(row[3]);
+			nw->day = strdup(row[4]);
+			nw->mon = strdup(row[5]);
+			nw->dow = strdup(row[6]);
+			nw->uid = maybe_atoi(row[7], -1);
+			nw->gid = maybe_atoi(row[8], -1);
 			nw->andor = (row[12] && (*(row[12]) == '&')) ? 1 : 0;
-			scp(nw->name, row[11]);
-			scp(nw->cmd, row[10]);
+			nw->nic = maybe_atoi(row[13], 0);
+			nw->name = strdup(row[11]);
+			nw->cmd = strdup(row[10]);
 			nw->runonce = atoi(row[15]);
 
-			/* FIXME get from locale maybe */
 			trans(&nw->dow, "Sun", "0");
 			trans(&nw->dow, "Mon", "1");
 			trans(&nw->dow, "Tue", "2");
@@ -343,174 +428,107 @@ refresh(int sig)
 			trans(&nw->mon, "*", LIMO_MON);
 			trans(&nw->dow, "*", LIMO_DOW);
 			
-//			dbg("job %s (%s): %s %s %s %s %s %s %c\n", nw->name, nw->cmd, nw->sec, nw->min, nw->hour, nw->day, nw->mon, nw->dow, nw->andor);
-
-			gnerun(nw);	/* update nw->nextrun */
-
-			nw->n = nw->gn = curlst;
-			curlst = nw;
+			gnerun(nw);	/* updates nw->nextrun */
+			nw->n = jlst;
+			jlst = nw;
 		}
-	mysql_free_result(res);
-
-	/* ->n's are set to point to the new curlst */
-	Jobs *x;
-	x = gclst;
-	while (x) {
-		x->n = curlst;
-		x = x->gn;
+		mysql_free_result(res);
 	}
 	
 	/* close db */
 	mysql_close(sql);
-//	dbg("disconnect");
+	return jlst;
 }
 
-/* run_this - TODO comment
+
+/* run_this - runs or queues job
  *	 called by
  *	  -run_jobs (scheduled for now)
  *	  -childcare (a job has ended so we can run another)
- *
- *	TODO run_this shouldnt be called by childcare in debug mode
- *	 	maybe if run_this added to Q dont sleep N sec but just one
- *	 	and upon starting run_this, check the Q and jobs_running
  */
 void
-run_this(char *cmd)
+run_this(const char *cmd, int uid, int gid, int nic)
 {
-	dbg("run_this(\"%s\")\n", cmd);
-	LOCKED(dbg("jobs_running=%d\n", jobs_running));
-	if (max_jobs != 0) {
-		if (jobs_running >= max_jobs) {
-			dbg("queueing %s\n", cmd);
-			addQ(cmd);
-			return;
-		} else {
-			LOCKED(jobs_running++);
-		}
+	if (max_jobs && (jobs_running >= max_jobs)) {
+		dbg("queueing %s\n", cmd);
+		addQ(cmd, uid, gid, nic);
+		return;
 	}
+
+	/* really running it now */
 	switch (fork()) {
 		case -1:
-			errf("fork error\n");
+			err("fork error, job %s not run, queueing", cmd);
+			addQ(cmd, uid, gid, nic);
 			return;
 		case 0:
-			/* TODO handle uid, gid and nice*/
-			// setuid(uid);
-			// setgid(gid);
-			dbg("running %s\n", cmd);
+			if (allow_uidgid && (uid != -1))
+				if (setuid(uid))
+					wrn("setuid: can't set uid to %d: %s", uid, strerror(errno));
+			if (allow_uidgid && (gid != -1))
+				if (setgid(gid))
+					wrn("setgid: can't set gid to %d: %s", uid, strerror(errno));
+			if ((nic > 0) || ((nic < 0) && allow_notnice)) {
+				errno = 0;
+				if ((nice(nic) == -1) && errno)
+					wrn("nice: can't renice by %d: %s", nic, strerror(errno));
+			}
+			dbg("running %s", cmd);
 			
-			char *argv[4] = {"sh", "-c", cmd, 0};
+			char *argv[4] = {"sh", "-c", cmd, 0};	/* compiler warns about discarding constness of cmd but we are forked so who cares */
 
 			execve("/bin/sh", argv, environ);
 
-			errf("something amiss\n");
+			err("something amiss");
 			exit(1);
 			break;
 		default:
-			dbg("fork went well\n");
+			jobs_running++;
 	}
-	dbg("run_this out\n");
 }
 
 
+/* handles children */
 void
-run_jobs(void)
-{
-	int ttc = 0;
-	for (;;) {
-		Jobs *s;
-		time_t tm;
-
-		tm = time(NULL);
-		s = curlst;
-		if (s == NULL) {
-			if (ttc < reload)
-				ttc++;
-		} else {
-			ttc = 0;
-		}
-			
-		while (s) {
-			if (s->runonce == 0) { /* -1 = eternal, 0 = no longer, n = n times yet */
-				s = s->n;
-				continue;
-			}
-			if ((tm >= s->nextrun) && (s->lastrun != s->nextrun)) {
-				s->lastrun = tm;
-				if (s->runonce > 0) {
-					s->runonce--;
-					dbg("job %s will run %d times yet\n", s->name, s->runonce);
-				}
-				run_this(s->cmd);
-				gnerun(s);
-			}
-			/* ttc - time to sleep */
-			if (!ttc)
-				ttc = s->nextrun - tm;
-			else if (s->nextrun - tm < ttc)
-				ttc = s->nextrun - tm;
-			s = s->n;
-		}
-		dbg("sleeping for %d sec\n", ttc);
-		// TODO use nanosleep
-		usleep(ttc * 1000000);
-	}
-	dbg("%d\n", __LINE__);
-}
-/* l8r:
- * char hname[HOST_NAME_MAX + 1];
- * if (gethostname(hname, HOST_NAME_MAX + 1))
- * 	strcpy(hname, "localhost");
- */
-
-
-void
-childcare(int sig)
+childcare(void)
 {	
-//	dbg("childcare_in (sig=%d, SIGCHLD=%d)\n", sig, SIGCHLD);
-	if (sig != SIGCHLD)
-		return;
-
 	int st, pid;
-//	dbg("quork?\n");
 	pid = waitpid(-1, &st, WNOHANG);
 	
-	/* please don't remove the braces, dbg is a macro */
 	if (pid == -1) {
-//		dbg("waitpid error, weird\n");
+		dbg("waitpid error, weird");
 	} else if (pid == 0) {
-//		dbg("no child has terminated yet a SIGCHILD was delivered\n");
+		dbg("no child has terminated yet a SIGCHILD was delivered");
 	} else {
-//		inf("%d is dead, status %d\n", pid, WEXITSTATUS(st));
-		LOCKED(jobs_running--);
+		inf("%d is dead, status %d", pid, WEXITSTATUS(st));
+		jobs_running--;
 	
 		char *cmd = NULL;
-		LOCK;
+		int uid, gid, nic = 0;
+		uid = gid = -1;
+		
 		if (job_queue_count)
-			cmd = getQ(0);
-		UNLOCK;
+			cmd = getQ(&uid, &gid, &nic);
 		if (cmd) {
-			run_this(cmd);
-			free(cmd);
+			run_this(cmd, uid, gid, nic);
+			free(cmd);	/* malloced by addQ */
 		}
 	}
-//	dbg("%d\n", __LINE__);
 }
 
 
 /* gnerun - updates j->nextrun */
-/* TODO add option timezone - expecting UTC */
-/* TODO negative options */
 void
 gnerun(Jobs *j)
 {
 	if ((j == NULL) || (j->runonce == 0))
 		return;
 
-	time_t tm;
+	time_t tm, tmo;
 	struct tm *tim;
 
 	/* +1 so we don't repeat a task n-times within 1 sec */
-	tm = time(NULL);
+	tm = tmo = time(NULL);
 	if (tm == j->lastrun)
 		tm++;
 	tim = gmtime(&tm);
@@ -540,12 +558,11 @@ nmin:	while (!isin(j->min, tim->tm_min, LIMO_MIN)) {
 		if (tim->tm_sec == 0)
 			goto nmin;
 	}
-	dbg("job %s will be run in %d sec (%04d-%02d-%02d %02d:%02d:%02d)\n", j->name, (int) (tm - time(NULL)), 1900 + tim->tm_year, tim->tm_mon, tim->tm_mday, tim->tm_hour, tim->tm_min, tim->tm_sec);
 	j->nextrun = tm;
-	dbg("%d\n", __LINE__);
 }
 
 
+/* is {v \elem *z}? */
 int
 isin(const char *z, int v, const char *limo)
 {
@@ -554,7 +571,9 @@ isin(const char *z, int v, const char *limo)
 	
 	if (!z)
 		return 0;
-	scp(s, z);
+	s = strdup(z);
+	if (!s)
+		return 0;
 	
 	do {
 		c = s;
@@ -567,7 +586,7 @@ isin(const char *z, int v, const char *limo)
 		}
 		/* got token in c; rest in s or e 1 */
 		if (*c == '*') {
-			warnf("internal error: unconverted asterisk found\n");
+			wrn("internal error: unconverted asterisk found");
 			return 1;
 		}
 		if (strchr(c, '-') == NULL) {
@@ -621,7 +640,6 @@ isin(const char *z, int v, const char *limo)
 		}
 	} while (!e);
 
-	dbg("%d\n", __LINE__);
 	return 0;
 }
 
@@ -630,28 +648,34 @@ isin(const char *z, int v, const char *limo)
 void
 trans(char **in, const char *foo, const char *bar)
 {
+	if ((!in) || (!(*in)) || (!foo)) {
+		dbg("trans called with a NULL <in>, <*in> or <foo> argument");
+		return;
+	}
+
 	int l = 0;
 	char *x, *y, *z;
 
 	x = y = *in;
-
 	while ((x = strstr(x, foo)))
 		l++, x += strlen(foo);
 	
-	if (!l)
+	if (!l)	/* no $foo, so no change */
 		return;
 	
-	z = x = malloc(strlen(*in) + (l * (strlen(bar) - strlen(foo))) + 1);
-	if (!x) {
-		errf("memory\n");
+	z = x = malloc(strlen(y) + (l * ((bar ? strlen(bar) : 0) - strlen(foo))) + 1);
+	if (!z) {
+		err("memory");
 		return;
 	}
 	
-	while(*y) {
+	while (*y) {
 		if (strstr(y, foo) == y) {
 			*z = 0;
-			strcat(z, bar);
-			z += strlen(bar);
+			if (bar) {
+				strcat(z, bar);
+				z += strlen(bar);
+			}
 			y += strlen(foo);
 		} else {
 			*(z++) = *(y++);
@@ -661,29 +685,30 @@ trans(char **in, const char *foo, const char *bar)
 
 	free(*in);
 	*in = x;
-	dbg("trans out %d\n", __LINE__);
 }
 
 
-/* addQ - adds copy of cmd to the job queue */
+/* addQ - adds a copy of cmd to the job queue */
 void
-addQ(const char *cmd)
+addQ(const char *cmd, int uid, int gid, int nic)
 {
 	JoQ *n;
 	n = malloc(sizeof(JoQ));
 	if (!n) {
-		errf("memory error, forgetting %s !!\n", cmd);
+		err("memory error, forgetting %s !!", cmd);
 		return;
 	}
 	n->cmd = malloc(strlen(cmd) + 1);
 	if (!n->cmd) {
-		errf("memory error, forgetting %s !!\n", cmd);
+		err("memory error, forgetting %s !!", cmd);
 		free(n);
 		return;
 	}
 	strcpy(n->cmd, cmd);
+	n->uid = uid;
+	n->gid = gid;
+	n->nic = nic;
 	n->n = NULL;
-	LOCK;
 	if (job_queue_end)
 		job_queue_end->n = n;
 	if (!job_queue_start)
@@ -691,32 +716,53 @@ addQ(const char *cmd)
 	job_queue_end = n;
 	job_queue_count++;
 	if (job_queue_count % 10 == 0)
-		warnf("warning: queue contains %d items\n", job_queue_count);
-	UNLOCK;
-	dbg("%d\n", __LINE__);
+		wrn("queue contains %d items", job_queue_count);
 }
 
 
-/* getQ - gets a cmd from the job queue (lock (bool) ?) */
+/* getQ - gets a cmd from the job queue and remove it */
 char *
-getQ(int lock)
+getQ(int *uid, int *gid, int *nic)
 {
-	dbg("getQ %d (lock=%d)\n", __LINE__, lock);
 	char *s = NULL;
 	JoQ *b = NULL;
-	if (lock) {
-		LOCK;
-	}
-	if ((b = job_queue_start))
+	if ((b = job_queue_start)) {
 		job_queue_start = b->n;
-	if (b->n == NULL)
-		job_queue_end = NULL;
-	job_queue_count--;
-	if (lock) {
-		UNLOCK;
+		job_queue_count--;
+		s = b->cmd;
+		if (uid)
+			*uid = b->uid;
+		if (gid)
+			*gid = b->gid;
+		if (nic)
+			*nic = b->nic;
 	}
-	s = b->cmd;
-	free(b);
-	dbg("%d\n", __LINE__);
+	if ((!b) || (b->n == NULL))
+		job_queue_end = NULL;
+	Free(b);
 	return s;
+}
+
+
+/* pidnaam - return pidfile name - for dlog.h */
+const char *
+pidnaam(void)
+{
+	return pidfile;
+}
+
+
+/* maybe_atoi - (s =~ /^-?[0-9]+$/) && atoi(s) || x */
+int
+maybe_atoi(const char *s, int x)
+{
+	if (!s)
+		return x;
+	const char *z = s;
+	while (*z) {
+		if (!strchr("-0123456789", *z))
+			return x;
+		z++;
+	}
+	return atoi(s);
 }

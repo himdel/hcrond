@@ -1,19 +1,39 @@
-options.l:	options with a param on cmdline are parsed wrong
-*.[clh]: comment properly
+* create db
+* standartise malloc errors: err("malloc: %s", strerror(errno));
+* handle possiblity of STOP/RESUME in childcare
+* remove queue, just wait for a signal
+* store Jobs in a tree sorted by nextrun
+* README - mention dependency on libmysqlclient and libdaemon
+* on SIGHUP remember jobs_running (and queue if still present)
+* implement frequency options (except for sec) (min == -2 to mean twice per min)
+* options.l:	--option=value is ok but --option value isn't - FIX
+* use daemon_signal_fd and select but need tree first
+* add option timezone - expecting UTC
+* isin: check validity of string first (must be /^[0-9]+-[0-9]+$/)
+* extern int allow_root;
+* extern int force_uid;
+* extern int force_gid;
+* extern char *force_hostname;
+* extern int ignore_machine;
+* extern char *force_shell;
+* extern int force_shell_die;
 
-ChangeLog:TODO
-README: * TODO negative numbers signify frequency (sec == -2 => run twice per sec)
-main.c:	/* pidfile check - start-stop-daemon does this, but TODO anyway */
-main.c:	/* TODO handle SIGHUP */
-main.c:/* TODO pass gclst and curlst and if entry in both, solve (so as not to forgot lastrun */
-main.c:/* TODO fields by name - using this:
-main.c:/* run_this - TODO comment
-main.c: *	TODO run_this shouldnt be called by childcare in debug mode
-main.c:			/* TODO handle uid, gid and nice*/
-main.c:		// TODO use nanosleep
-main.c:/* TODO add option timezone - expecting UTC */
-main.c:/* TODO negative options */
-main.c:	char query[256];	/* FIXME constants are evil, use snprint and malloc */
-main.c:			if (!nw) { /* FIXME better */
-main.c:			/* FIXME get from locale maybe */
-main.c:// FIXME check validity of string first (must be /^[0-9]+-[0-9]+$/)
+/** hostname:
+ *
+ * char hname[HOST_NAME_MAX + 1];
+ * if (gethostname(hname, HOST_NAME_MAX + 1))
+ * 	strcpy(hname, "localhost");
+ */
+
+/** fields by name:
+ *
+ * 	unsigned int num_fields;
+ * 	unsigned int i;
+ * 	MYSQL_FIELD *fields;
+ * 	
+ * 	num_fields = mysql_num_fields(result);
+ * 	fields = mysql_fetch_fields(result);
+ *
+ * 	for(i = 0; i < num_fields; i++)
+ * 		printf("Field %u is %s\n", i, fields[i].name);
+ */

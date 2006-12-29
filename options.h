@@ -20,5 +20,6 @@ extern int force_shell_die;
 extern int debug;
 extern int reload;
 extern int max_jobs;
+extern int kill;
 
 extern int optmain(int argc, char **argv);

@@ -1,24 +1,24 @@
 CC=gcc
 LD=gcc
 
-# gnu99 note: sorry, I can't compile main.c (sigaction stuff) with -std=c99
-#	 don't know why. So I use gnu99. If you don't use gcc, try c99 and
-#	 propably don't forget to uncomment __USE_POSIX in locks.c
-CFLAGS=-std=gnu99 -pedantic -Wall -W
-LDFLAGS=-lmysqlclient -lpthread
+CFLAGS=-std=c99 -pedantic -Wall -W
+LDFLAGS=-lmysqlclient -ldaemon
 LEX=flex
 
-OBJS=options.o main.o locks.o
+OBJS=options.o main.o
 GEND=options.c version.h
+
+all: HAVE_libdaemon hcrond
+
+HAVE_libdaemon:
+	pkg-config libdaemon
 
 hcrond: $(OBJS)
 	$(LD) -o $@ $^ $(LDFLAGS)
 
-main.o: main.c options.h locks.h logs.h
+main.o: main.c options.h logs.h compat.h
 
-options.o: options.c options.h version.h help.c
-
-locks.o: locks.c locks.h logs.h options.h
+options.o: options.c options.h version.h help.c compat.h
 
 options.c: options.l
 
