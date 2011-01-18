@@ -1,7 +1,7 @@
 /*
  * hcrond - a cron with crontab in mysql
  *
- *  Copyright 2006 Martin Hradil <himdel@seznam.cz>
+ *  Copyright 2006-2011 Martin Hradil <himdel@seznam.cz>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -434,7 +434,7 @@ run_jobs(void)
 				s = s->n;
 				continue;
 			}
-			if ((tm >= s->nextrun) && (s->lastrun != s->nextrun)) {
+			if ((tm >= s->nextrun) && (s->lastrun != s->nextrun)) {	// TODO the second part might be wrong if we don't update nextrun somewhere
 				s->lastrun = tm;
 				if (s->runonce > 0) {
 					s->runonce--;
@@ -515,7 +515,7 @@ gnerun(Jobs *j)
 		tm++;
 	tim = gmtime(&tm);
 
-nday:	while (!((j->andor && isin(j->day, tim->tm_mday, LIMO_DAY) && isin(j->mon, tim->tm_mon, LIMO_MON) && isin(j->dow, tim->tm_wday, LIMO_DOW)) || ((!j->andor) && ((isin(j->day, tim->tm_mday, LIMO_DAY) && isin(j->mon, tim->tm_mon, LIMO_MON)) || isin(j->dow, tim->tm_wday, LIMO_DOW))))) {
+nday:	while (!((j->andor && isin(j->day, tim->tm_mday, LIMO_DAY) && isin(j->mon, tim->tm_mon + 1, LIMO_MON) && isin(j->dow, tim->tm_wday, LIMO_DOW)) || ((!j->andor) && ((isin(j->day, tim->tm_mday, LIMO_DAY) && isin(j->mon, tim->tm_mon + 1, LIMO_MON)) || isin(j->dow, tim->tm_wday, LIMO_DOW))))) {
 		tm += 24 * 3600;
 		tm -= tim->tm_sec + 60 * tim->tm_min + 3600 * tim->tm_hour;
 		tim = gmtime(&tm);
@@ -540,7 +540,7 @@ nmin:	while (!isin(j->min, tim->tm_min, LIMO_MIN)) {
 		if (tim->tm_sec == 0)
 			goto nmin;
 	}
-	dbg("job %s will be run in %d sec (%04d-%02d-%02d %02d:%02d:%02d)\n", j->name, (int) (tm - time(NULL)), 1900 + tim->tm_year, tim->tm_mon, tim->tm_mday, tim->tm_hour, tim->tm_min, tim->tm_sec);
+	dbg("job %s will be run in %d sec (%04d-%02d-%02d %02d:%02d:%02d)\n", j->name, (int) (tm - time(NULL)), 1900 + tim->tm_year, tim->tm_mon + 1, tim->tm_mday, tim->tm_hour, tim->tm_min, tim->tm_sec);
 	j->nextrun = tm;
 	dbg("%d\n", __LINE__);
 }

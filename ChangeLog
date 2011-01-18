@@ -1,2 +1,5 @@
+2011-01-18:
+	bugfix: no jobs got run in January if mon="*" and andor="&", also mon="1" meant February, not January - fixed now, thanks to Philipp Schreiber for reporting it
+
 TODO
 it works fine now, check out TODO

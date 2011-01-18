@@ -1,6 +1,6 @@
  * hcrond - a cron with crontab in mysql
  *
- *  Copyright 2006 Martin Hradil <himdel@seznam.cz>
+ *  Copyright 2006-2011 Martin Hradil <himdel@seznam.cz>
  *  Licensed under GPL the terms of which can be found in the file COPYING.
 
 
