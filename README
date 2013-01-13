@@ -1,12 +1,7 @@
-This is the version without pidfile support.
-
-* hcrond - a cron with crontab in mysql
+ * hcrond - a cron with crontab in mysql
  *
- *  Copyright 2006 Martin Hradil <himdel@seznam.cz>
+ *  Copyright 2006, 2007, Martin Hradil <himdel@seznam.cz>
  *  Licensed under GPL the terms of which can be found in the file COPYING.
-
-
- * TODO update
 
  * table:
  * id = unique identifier

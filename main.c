@@ -35,6 +35,9 @@
 #include <libdaemon/dfork.h>
 #include <libdaemon/dlog.h>
 #include <libdaemon/dsignal.h>
+#ifdef HCROND_PIDFILE_SUPPORT
+#include <libdaemon/dpid.h>
+#endif
 
 #include "options.h"
 #include "logs.h"
@@ -93,6 +96,9 @@ int isin(const char *z, int v, const char *limo);
 void trans(char **in, const char *foo, const char *bar);
 void addQ(const char *cmd, int uid, int gid, int nic);
 char *getQ(int *uid, int *gid, int *nic);
+#ifdef HCROND_PIDFILE_SUPPORT
+const char *pidnaam(void);
+#endif
 int queryf(MYSQL *sql, const char *fmt, ...);
 int maybe_atoi(const char *s, int x);
 
@@ -107,8 +113,21 @@ main(int argc, char **argv)
 	
 	/* SIGINT running hcrond */
 	if (kill) {
-		err("do it yourself");
+#ifdef HCROND_PIDFILE_SUPPORT
+		int ret;
+
+		#ifdef DAEMON_PID_FILE_KILL_WAIT_AVAILABLE
+		if ((ret = daemon_pid_file_kill_wait(SIGINT, 5)) < 0)
+		#else
+		if ((ret = daemon_pid_file_kill(SIGINT)) < 0)
+		#endif
+			wrn("Failed to kill daemon");
+
+		return (ret < 0) ? 1 : 0;
+#else
+		err("No pidfile, no killing");
 		return 1;
+#endif
 	}
 
 	/* start log */
@@ -133,7 +152,28 @@ main(int argc, char **argv)
 		}
 	}
 	inf(debug ? "start (debug = 1)" : "start");
-
+	
+#ifdef HCROND_PIDFILE_SUPPORT
+	/* pidfile */
+	pid_t pid;
+	daemon_pid_file_proc = pidnaam;
+	if (daemon_pid_file_create() != 0) {
+		pid_t pid;
+		pid = daemon_pid_file_is_running();
+		if (pid < 0)
+			err("unknown pidfile error");
+		else
+			err("pidfile already exists - for pid %d", pid);
+		return 1;
+	}
+	atexit((void (*)(void)) daemon_pid_file_remove);
+	
+	if (((pid = daemon_pid_file_is_running()) > 0) && (pid != getpid())) {
+		err("already running with pid %u", pid);
+		return 1;
+	}
+#endif
+	
 	/** signals
 	 *  - reloading from db is done on SIGALRM
 	 *  - if jobs_running < max_jobs, SIGCHLD starts new tasks
@@ -165,6 +205,9 @@ main(int argc, char **argv)
 	}
 
 	if (ret == SIGHUP) {	/* reload, not die */
+#ifdef HCROND_PIDFILE_SUPPORT
+		daemon_pid_file_remove();
+#endif
 		daemon_signal_done();
 		execvp(argv[0], argv);
 		/* something's terribly wrong */
@@ -173,6 +216,7 @@ main(int argc, char **argv)
 	}
 
 	/** done by atexit:
+	 *	daemon_pid_file_remove();	(ifdef HCROND_PIDFILE_SUPPORT)
 	 *	daemon_signal_done();
 	 */
 
@@ -711,6 +755,16 @@ getQ(int *uid, int *gid, int *nic)
 	Free(b);
 	return s;
 }
+
+
+#ifdef HCROND_PIDFILE_SUPPORT
+/* pidnaam - return pidfile name - for dlog.h */
+const char *
+pidnaam(void)
+{
+	return pidfile;
+}
+#endif
 
 
 /* maybe_atoi - (s =~ /^-?[0-9]+$/) && atoi(s) || x */

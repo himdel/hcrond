@@ -1,3 +1,10 @@
+hcrond-0.4.0 (released 2007-01-01)
+ * pidfile support set as compile-time option => config.h
+ + tasks are organized in a priority queue => performance, ...
+
+hcrond-0.3.2-nopid (released 2006-12-30)
+ * pidfile support removed
+
 hcrond-0.3.2 (released 2006-12-29)
  * logging macros now really use daemon_log
 
