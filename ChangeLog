@@ -1,5 +1,64 @@
-2011-01-18:
-	bugfix: no jobs got run in January if mon="*" and andor="&", also mon="1" meant February, not January - fixed now, thanks to Philipp Schreiber for reporting it
+hcrond-0.1.1 (released 2011-01-18)
+ * bugfix:
+  * no jobs got run in January if mon="\*" and andor="&"
+  * also mon="1" meant February, not January
+  * thanks to Philipp Schreiber for reporting it
+ * more TODO
 
-TODO
-it works fine now, check out TODO
+hcrond-0.4.0 (released 2007-01-01)
+ * pidfile support set as compile-time option => config.h
+ + tasks are organized in a priority queue => performance, ...
+
+hcrond-0.3.2-nopid (released 2006-12-30)
+ * pidfile support removed
+
+hcrond-0.3.2 (released 2006-12-29)
+ * logging macros now really use daemon_log
+
+hcrond-0.3.1 (released 2006-12-28)
+ + uid, gid, nice, allow_uidgid, allow_notnice
+
+hcrond-0.3 (released 2006-12-28)
+ * lots of changes
+
+hcrond-0.2 (released 2006-08-24)
+ * we now depend on libdaemon
+ + pidfile implemented
+ * logging macros (dbg, err, inf, wrn) now use daemonlog
+ * macro scp(d, s) replaced by d = strdup(s)
+ + add option -k, --kill to kill the running hcrond
+ + SIGHUP, SIGINT and SIGQUIT handled correctly
+ 	INT & QUIT update the db and die
+	HUP update the db and start anew, remembering jobs_running
+ * removed locking as none needed
+ * no need for garbage list, removed
+ * job list is now just a single linked list (should become a tree one day)
+ * thanks in README
+ * trans now handles NULL inputs (only the 3rd param can be NULL)
+ * split database refresh stuff
+ * signals are handled by libdaemon, in run_jobs and main
+ 	libdaemon provides daemon_signal_next
+	run_jobs handles SIGALRM and SIGCHLD, other signals mean return
+	main handles SIGHUP and dies on SIGINT and SIGQUIT
+ * TODO TODO
+
+hcrond-0.1 (~ Aug 8, 2006)
+ * initial release (except for various unstable -rc's)
+ * uses --std=gnu99 because of sigaction
+ * more TODO
+ * uses sigaction, doesn't do SIGHUP
+ * some dbg stuff commented out, why?
+
+hcrond 0.1-rc3 (~ Aug 7, 2006)
+ * locking fixed - phthread & semaphore
+ * pidfile
+ * more debug info
+
+hcrond 0.1-rc1 (~ Jun 31, 2006)
+ * has license gpl2
+ * empty changelog
+ * makefile using flex and libmysqlclient
+ * readme with opts and db table
+ * todo list with some bugs
+ * hcrond sysv initscript
+ * random locking
