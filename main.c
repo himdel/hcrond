@@ -34,7 +34,6 @@
 #include <mysql/mysql.h>
 #include <libdaemon/dfork.h>
 #include <libdaemon/dlog.h>
-#include <libdaemon/dpid.h>
 #include <libdaemon/dsignal.h>
 
 #include "options.h"
@@ -94,7 +93,6 @@ int isin(const char *z, int v, const char *limo);
 void trans(char **in, const char *foo, const char *bar);
 void addQ(const char *cmd, int uid, int gid, int nic);
 char *getQ(int *uid, int *gid, int *nic);
-const char *pidnaam(void);
 int queryf(MYSQL *sql, const char *fmt, ...);
 int maybe_atoi(const char *s, int x);
 
@@ -109,16 +107,8 @@ main(int argc, char **argv)
 	
 	/* SIGINT running hcrond */
 	if (kill) {
-		int ret;
-
-		#ifdef DAEMON_PID_FILE_KILL_WAIT_AVAILABLE
-		if ((ret = daemon_pid_file_kill_wait(SIGINT, 5)) < 0)
-		#else
-		if ((ret = daemon_pid_file_kill(SIGINT)) < 0)
-		#endif
-			wrn("Failed to kill daemon");
-
-		return (ret < 0) ? 1 : 0;
+		err("do it yourself");
+		return 1;
 	}
 
 	/* start log */
@@ -143,25 +133,6 @@ main(int argc, char **argv)
 		}
 	}
 	inf(debug ? "start (debug = 1)" : "start");
-	
-	/* pidfile */
-	pid_t pid;
-	daemon_pid_file_proc = pidnaam;
-	if (daemon_pid_file_create() != 0) {
-		pid_t pid;
-		pid = daemon_pid_file_is_running();
-		if (pid < 0)
-			err("unknown pidfile error");
-		else
-			err("pidfile already exists - for pid %d", pid);
-		return 1;
-	}
-	atexit((void (*)(void)) daemon_pid_file_remove);
-
-	if (((pid = daemon_pid_file_is_running()) > 0) && (pid != getpid())) {
-		err("already running with pid %u", pid);
-		return 1;
-	}
 
 	/** signals
 	 *  - reloading from db is done on SIGALRM
@@ -173,7 +144,7 @@ main(int argc, char **argv)
 		return 1;
 	}
 	atexit(daemon_signal_done);
-
+	
 	/* start looping - SIGALRM used to cause reload from db */
 	int ret;
 	raise(SIGALRM);
@@ -194,7 +165,6 @@ main(int argc, char **argv)
 	}
 
 	if (ret == SIGHUP) {	/* reload, not die */
-		daemon_pid_file_remove();
 		daemon_signal_done();
 		execvp(argv[0], argv);
 		/* something's terribly wrong */
@@ -203,7 +173,6 @@ main(int argc, char **argv)
 	}
 
 	/** done by atexit:
-	 *	daemon_pid_file_remove();
 	 *	daemon_signal_done();
 	 */
 
@@ -247,7 +216,7 @@ run_jobs(void)
 				s->lastrun = tm;
 				if (s->runonce > 0) {
 					s->runonce--;
-					dbg("job %s will run %d times yet\n", s->name, s->runonce);
+					dbg("job %s will run %d times yet", s->name, s->runonce);
 				}
 				run_this(s->cmd, s->uid, s->gid, s->nic);
 				gnerun(s);
@@ -274,7 +243,7 @@ db_connect()
 		mysql_close(sql);
 		return NULL;
 	}
-	dbg("connected to mysql\n");
+	dbg("connected to mysql");
 	return sql;
 }
 
@@ -450,7 +419,7 @@ void
 run_this(const char *cmd, int uid, int gid, int nic)
 {
 	if (max_jobs && (jobs_running >= max_jobs)) {
-		dbg("queueing %s\n", cmd);
+		dbg("queueing %s", cmd);
 		addQ(cmd, uid, gid, nic);
 		return;
 	}
@@ -741,14 +710,6 @@ getQ(int *uid, int *gid, int *nic)
 		job_queue_end = NULL;
 	Free(b);
 	return s;
-}
-
-
-/* pidnaam - return pidfile name - for dlog.h */
-const char *
-pidnaam(void)
-{
-	return pidfile;
 }
 
 

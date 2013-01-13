@@ -32,4 +32,3 @@ A cron daemon with precision in seconds and crontab in a MySQL table.
 * more TODO
 
 -- see ChangeLog for >0.2
-
